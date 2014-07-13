@@ -6,13 +6,12 @@ from datetime import datetime, timedelta
 from inbox.log import get_logger
 log = get_logger()
 
-PROVIDER = 'gmail'
-
-
 __volatile_tokens__ = {}
 
 
 class GmailAccount(ImapAccount):
+    PROVIDER = 'gmail'
+
     id = Column(Integer, ForeignKey(ImapAccount.id, ondelete='CASCADE'),
                 primary_key=True)
 
@@ -74,7 +73,3 @@ class GmailAccount(ImapAccount):
     @property
     def sender_name(self):
         return self.name or ''
-
-    @property
-    def provider(self):
-        return PROVIDER
