@@ -8,11 +8,14 @@ from flask.ext.restful import reqparse
 from sqlalchemy import asc, or_, func
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.orm import subqueryload
+from werkzeug.exceptions import (HTTPException, NotFound, BadRequest, Conflict,
+                                 TooManyRequests, Forbidden)
 
 from inbox.models import (Message, Block, Part, Thread, Namespace,
                           Tag, Contact, Calendar, Event, Transaction)
 from inbox.api.kellogs import APIEncoder
 from inbox.api import filtering
+from inbox.api.utils import get_object_or_404
 from inbox.api.validation import (InputError, get_tags, get_attachments,
                                   get_calendar, get_thread, get_recipients,
                                   valid_public_id, valid_event,
@@ -31,8 +34,6 @@ from inbox.models.session import InboxSession
 from inbox.search.adaptor import NamespaceSearchEngine, SearchEngineError
 from inbox.sendmail import rate_limited
 from inbox.transactions import delta_sync
-
-from err import err
 
 from inbox.ignition import main_engine
 engine = main_engine()
@@ -74,15 +75,11 @@ def start():
     g.db_session = InboxSession(engine)
 
     g.log = get_logger()
-    try:
-        valid_public_id(g.namespace_public_id)
-        g.namespace = g.db_session.query(Namespace) \
-            .filter(Namespace.public_id == g.namespace_public_id).one()
 
-        g.encoder = APIEncoder(g.namespace.public_id)
-    except (NoResultFound, InputError):
-        return err(404, "Couldn't find namespace with id `{0}` ".format(
-            g.namespace_public_id))
+    valid_public_id(g.namespace_public_id)
+    g.namespace = get_object_or_404(g.db_session, Namespace,
+                                    public_id = g.namespace_public_id)
+    g.encoder = APIEncoder(g.namespace.public_id)
 
     g.parser = reqparse.RequestParser(argument_class=ValidatableArgument)
     g.parser.add_argument('limit', default=DEFAULT_LIMIT, type=limit,
@@ -110,6 +107,31 @@ def handle_not_implemented_error(error):
 def handle_input_error(error):
     response = flask_jsonify(message=str(error), type='api_error')
     response.status_code = 400
+    return response
+
+@app.errorhandler(SearchEngineError)
+def handle_input_error(error):
+    response = flask_jsonify(message=str(error), type='api_search_engine_error')
+    response.status_code = 501
+    return response
+
+@app.errorhandler(ActionError)
+def handle_input_error(error):
+    response = flask_jsonify(message=str(error), type='api_action_log_error')
+    response.status_code = error.error
+    return response
+
+@app.errorhandler(HTTPException)
+def handle_base_error(error):
+    """
+    Since the api is JSON, and the HTTPException class
+    is not great for overriding (will require to reimplement all
+    child exceptions), we can instead catch HTTPException and convert
+    the message body  to json before sending out
+    """
+    response = flask_jsonify(message=error.description,
+                             type='invalid_request_error')
+    response.status_code = error.code
     return response
 
 
@@ -165,47 +187,35 @@ def tag_query_api():
 
 @app.route('/tags/<public_id>', methods=['GET'])
 def tag_read_api(public_id):
-    try:
-        valid_public_id(public_id)
-        tag = g.db_session.query(Tag).filter(
-            Tag.public_id == public_id,
-            Tag.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, '{} is not a valid id'.format(public_id))
-    except NoResultFound:
-        return err(404, 'No tag found')
-
+    valid_public_id(public_id)
+    tag = get_object_or_404(g.db_session, Tag, public_id = public_id,
+                            namespace_id = g.namespace.id)
     return g.encoder.jsonify(tag)
 
 
 @app.route('/tags/<public_id>', methods=['PUT'])
 def tag_update_api(public_id):
-    try:
-        valid_public_id(public_id)
-        tag = g.db_session.query(Tag).filter(
-            Tag.public_id == public_id,
-            Tag.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, '{} is not a valid id'.format(public_id))
-    except NoResultFound:
-        return err(404, 'No tag found')
+    valid_public_id(public_id)
+    tag = get_object_or_404(g.db_session, Tag, public_id = public_id,
+                            namespace_id = g.namespace.id)
 
     data = request.get_json(force=True)
     if not ('name' in data.keys() and isinstance(data['name'], basestring)):
-        return err(400, 'Malformed tag update request')
+        raise BadRequest('Malformed tag update request')
+
     if 'namespace_id' in data.keys():
         ns_id = data['namespace_id']
         valid_public_id(ns_id)
         if ns_id != g.namespace.id:
-            return err(400, 'Cannot change the namespace on a tag.')
+            raise BadRequest('Cannot change the namespace on a tag.')
     if not tag.user_created:
-        return err(403, 'Cannot modify tag {}'.format(public_id))
+        raise Forbidden('Cannot modify tag {}'.format(public_id))
     # Lowercase tag name, regardless of input casing.
     new_name = data['name'].lower()
 
     if new_name != tag.name:  # short-circuit rename to same value
         if not Tag.name_available(new_name, g.namespace.id, g.db_session):
-            return err(409, 'Tag name already used')
+            raise Conflict('Tag name already used')
         tag.name = new_name
         g.db_session.commit()
 
@@ -216,18 +226,18 @@ def tag_update_api(public_id):
 def tag_create_api():
     data = request.get_json(force=True)
     if not ('name' in data.keys() and isinstance(data['name'], basestring)):
-        return err(400, 'Malformed tag request')
+        raise BadRequest('Malformed tag request')
     if 'namespace_id' in data.keys():
         ns_id = data['namespace_id']
         valid_public_id(ns_id)
         if ns_id != g.namespace.id:
-            return err(400, 'Cannot change the namespace on a tag.')
+            raise BadRequest('Cannot change the namespace on a tag.')
     # Lowercase tag name, regardless of input casing.
     tag_name = data['name'].lower()
     if not Tag.name_available(tag_name, g.namespace.id, g.db_session):
-        return err(409, 'Tag name not available')
+        raise Conflict('Tag name not available')
     if len(tag_name) > MAX_INDEXABLE_LENGTH:
-        return err(400, 'Tag name is too long.')
+        raise BadRequest('Tag name is too long.')
 
     tag = Tag(name=tag_name, namespace=g.namespace, user_created=True)
     g.db_session.commit()
@@ -236,26 +246,18 @@ def tag_create_api():
 
 @app.route('/tags/<public_id>', methods=['DELETE'])
 def tag_delete_api(public_id):
-    try:
-        valid_public_id(public_id)
-        t = g.db_session.query(Tag).filter(
-            Tag.public_id == public_id).one()
+    valid_public_id(public_id)
+    tag = get_object_or_404(g.db_session, Tag, public_id = public_id)
 
-        if not t.user_created:
-            return err(400, "Can't delete non user-created tag.")
+    if not tag.user_created:
+        raise BadRequest("Can't delete non user-created tag.")
 
-        g.db_session.delete(t)
-        g.db_session.commit()
+    g.db_session.delete(tag)
+    g.db_session.commit()
 
-        # This is essentially what our other API endpoints do after deleting.
-        # Effectively no error == success
-        return g.encoder.jsonify(None)
-    except InputError:
-        return err(400, 'Invalid tag id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find tag with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
-
+    # This is essentially what our other API endpoints do after deleting.
+    # Effectively no error == success
+    return g.encoder.jsonify(None)
 
 #
 # Threads
@@ -311,51 +313,31 @@ def thread_search_api():
 
     validate_search_query(query)
 
-    try:
-        search_engine = NamespaceSearchEngine(g.namespace_public_id)
-        results = search_engine.threads.search(query=query,
-                                               max_results=args.limit,
-                                               offset=args.offset)
-    except SearchEngineError as e:
-        g.log.error('Search error: {0}'.format(e))
-        return err(501, 'Search error')
-
+    search_engine = NamespaceSearchEngine(g.namespace_public_id)
+    results = search_engine.threads.search(query=query,
+                                           max_results=args.limit,
+                                           offset=args.offset)
     return g.encoder.jsonify(results)
 
 
 @app.route('/threads/<public_id>')
 def thread_api(public_id):
-    try:
-        valid_public_id(public_id)
-        thread = g.db_session.query(Thread).filter(
-            Thread.public_id == public_id,
-            Thread.namespace_id == g.namespace.id).one()
-        return g.encoder.jsonify(thread)
-    except InputError:
-        return err(400, 'Invalid thread id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find thread with id `{0}` "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
-
+    valid_public_id(public_id)
+    thread = get_object_or_404(g.db_session, Thread, public_id = public_id,
+                               namespace_id = g.namespace.id)
+    return g.encoder.jsonify(thread)
 
 #
 # Update thread
 #
 @app.route('/threads/<public_id>', methods=['PUT'])
 def thread_api_update(public_id):
-    try:
-        valid_public_id(public_id)
-        thread = g.db_session.query(Thread).filter(
-            Thread.public_id == public_id,
-            Thread.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, 'Invalid thread id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find thread with id `{0}` "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+    valid_public_id(public_id)
+    thread = get_object_or_404(g.db_session, Thread, public_id = public_id,
+                               namespace_id = g.namespace.id)
     data = request.get_json(force=True)
     if not set(data).issubset({'add_tags', 'remove_tags'}):
-        return err(400, 'Can only add or remove tags from thread.')
+        raise BadRequest('Can only add or remove tags from thread.')
 
     removals = data.get('remove_tags', [])
 
@@ -365,14 +347,11 @@ def thread_api_update(public_id):
             or_(Tag.public_id == tag_identifier,
                 Tag.name == tag_identifier)).first()
         if tag is None:
-            return err(404, 'No tag found with name {}'.format(tag_identifier))
+            raise NotFound('No tag found with name {}'.format(tag_identifier))
         if not tag.user_removable:
-            return err(400, 'Cannot remove tag {}'.format(tag_identifier))
+            return BadRequest('Cannot remove tag {}'.format(tag_identifier))
 
-        try:
-            thread.remove_tag(tag, execute_action=True)
-        except ActionError as e:
-            return err(e.error, str(e))
+        thread.remove_tag(tag, execute_action=True)
 
     additions = data.get('add_tags', [])
     for tag_identifier in additions:
@@ -381,14 +360,11 @@ def thread_api_update(public_id):
             or_(Tag.public_id == tag_identifier,
                 Tag.name == tag_identifier)).first()
         if tag is None:
-            return err(404, 'No tag found with name {}'.format(tag_identifier))
+            raise NotFound('No tag found with name {}'.format(tag_identifier))
         if not tag.user_addable:
-            return err(400, 'Cannot add tag {}'.format(tag_identifier))
+            raise BadRequest('Cannot add tag {}'.format(tag_identifier))
 
-        try:
-            thread.apply_tag(tag, execute_action=True)
-        except ActionError as e:
-            return err(e.error, str(e))
+        thread.apply_tag(tag, execute_action=True)
 
     g.db_session.commit()
     return g.encoder.jsonify(thread)
@@ -456,38 +432,26 @@ def message_search_api():
 
     validate_search_query(query)
 
-    try:
-        search_engine = NamespaceSearchEngine(g.namespace_public_id)
-        results = search_engine.messages.search(query=query,
-                                                max_results=args.limit,
-                                                offset=args.offset)
-    except SearchEngineError as e:
-        g.log.error('Search error: {0}'.format(e))
-        return err(501, 'Search error')
+    search_engine = NamespaceSearchEngine(g.namespace_public_id)
+    results = search_engine.messages.search(query=query,
+                                            max_results=args.limit,
+                                            offset=args.offset)
 
     return g.encoder.jsonify(results)
 
 
 @app.route('/messages/<public_id>', methods=['GET', 'PUT'])
 def message_api(public_id):
-    try:
-        valid_public_id(public_id)
-        message = g.db_session.query(Message).filter(
-            Message.public_id == public_id,
-            Message.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, 'Invalid message id {}'.format(public_id))
-    except NoResultFound:
-        return err(404,
-                   "Couldn't find message with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+    valid_public_id(public_id)
+    message = get_object_or_404(g.db_session, Message, public_id = public_id,
+                                namespace_id = g.namespace.id)
+
     if request.method == 'GET':
         return g.encoder.jsonify(message)
     elif request.method == 'PUT':
         data = request.get_json(force=True)
         if data.keys() != ['unread'] or not isinstance(data['unread'], bool):
-            return err(400,
-                       'Can only change the unread attribute of a message')
+            raise BadRequest('Can only alter the unread attribute of a message')
 
         # TODO(emfree): Shouldn't allow this on messages that are actually
         # drafts.
@@ -507,22 +471,13 @@ def message_api(public_id):
 
 @app.route('/messages/<public_id>/rfc2822', methods=['GET'])
 def raw_message_api(public_id):
-    try:
-        valid_public_id(public_id)
-        message = g.db_session.query(Message).filter(
-            Message.public_id == public_id,
-            Message.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, 'Invalid message id {}'.format(public_id))
-    except NoResultFound:
-        return err(404,
-                   "Couldn't find raw message with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+    valid_public_id(public_id)
+    message = get_object_or_404(g.db_session, Message, public_id = public_id,
+                                namespace_id = g.namespace.id)
 
     if message.full_body is None:
-        return err(404,
-                   "Couldn't find raw message with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+        raise NotFound("Couldn't find raw message with id {0} on namespace {1}"\
+                       .format(public_id, g.namespace_public_id))
 
     b64_contents = base64.b64encode(message.full_body.data)
     return g.encoder.jsonify({"rfc2822": b64_contents})
@@ -568,7 +523,7 @@ def contact_create_api():
     name = data.get('name')
     email = data.get('email')
     if not any((name, email)):
-        return err(400, 'Contact name and email cannot both be null.')
+        raise BadRequest('Contact name and email cannot both be null.')
     new_contact = contacts.crud.create(g.namespace, g.db_session,
                                        name, email)
     return g.encoder.jsonify(new_contact)
@@ -576,16 +531,13 @@ def contact_create_api():
 
 @app.route('/contacts/<public_id>', methods=['GET'])
 def contact_read_api(public_id):
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid contact id {}'.format(public_id))
+    valid_public_id(public_id)
+
     # TODO auth with account object
     # Get all data for an existing contact.
     result = contacts.crud.read(g.namespace, g.db_session, public_id)
     if result is None:
-        return err(404, "Couldn't find contact with id {0}".
-                   format(public_id))
+        raise NotFound("Couldn't find contact with id {0}".format(public_id))
     return g.encoder.jsonify(result)
 
 
@@ -644,7 +596,7 @@ def event_create_api():
         new_events = events.crud.create_from_ics(g.namespace, g.db_session,
                                                  ics_str)
         if not new_events:
-            return err(400, "Couldn't parse .ics file.")
+            raise BadRequest("Couldn't parse .ics file.")
 
         return g.encoder.jsonify(new_events)
 
@@ -653,15 +605,15 @@ def event_create_api():
         calendar = get_calendar(data.get('calendar_id'),
                                 g.namespace, g.db_session)
     except InputError as e:
-        return err(404, str(e))
+        raise NotFound(str(e))
 
     if calendar.read_only:
-        return err(400, "Can't create events on read_only calendar.")
+        raise BadRequest("Can't create events on read_only calendar.")
 
     try:
         valid_event(data)
     except InputError as e:
-        return err(404, str(e))
+        raise NotFound(404, str(e))
 
     title = data.get('title', '')
     description = data.get('description')
@@ -692,10 +644,8 @@ def event_create_api():
 @app.route('/events/<public_id>', methods=['GET'])
 def event_read_api(public_id):
     """Get all data for an existing event."""
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid event id {}'.format(public_id))
+    valid_public_id(public_id)
+
     g.parser.add_argument('participant_id', type=valid_public_id,
                           location='args')
     g.parser.add_argument('action', type=valid_event_action, location='args')
@@ -733,23 +683,16 @@ def event_read_api(public_id):
 
     result = events.crud.read(g.namespace, g.db_session, public_id)
     if result is None:
-        return err(404, "Couldn't find event with id {0}".
-                   format(public_id))
+        raise NotFound("Couldn't find event with id {0}".format(public_id))
     return g.encoder.jsonify(result)
 
 
 @app.route('/events/<public_id>', methods=['PUT'])
 def event_update_api(public_id):
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid event id {}'.format(public_id))
-    data = request.get_json(force=True)
+    valid_public_id(public_id)
 
-    try:
-        valid_event_update(data, g.namespace, g.db_session)
-    except InputError as e:
-        return err(404, str(e))
+    data = request.get_json(force=True)
+    valid_event_update(data, g.namespace, g.db_session)
 
     # Convert the data into our types where necessary
     # e.g. timestamps, participant_list
@@ -765,15 +708,11 @@ def event_update_api(public_id):
             data['participant_list'].append(p)
         del data['participants']
 
-    try:
-        result = events.crud.update(g.namespace, g.db_session,
-                                    public_id, data)
-    except InputError as e:
-        return err(400, str(e))
+    result = events.crud.update(g.namespace, g.db_session,
+                                public_id, data)
 
     if result is None:
-        return err(404, "Couldn't find event with id {0}".
-                   format(public_id))
+        raise NotFound("Couldn't find event with id {0}".format(public_id))
 
     schedule_action('update_event', result, g.namespace.id, g.db_session)
     return g.encoder.jsonify(result)
@@ -781,22 +720,17 @@ def event_update_api(public_id):
 
 @app.route('/events/<public_id>', methods=['DELETE'])
 def event_delete_api(public_id):
+    valid_public_id(public_id)
     try:
-        valid_public_id(public_id)
-        event = g.db_session.query(Event).filter_by(
-            public_id=public_id). \
-            options(subqueryload(Event.calendar)).one()
-    except InputError:
-        return err(400, 'Invalid event id {}'.format(public_id))
+        event = g.db_session.query(Event).filter_by(public_id = public_id,
+            namespace_id = g.namespace.id) \
+            .options(subqueryload(Event.calendar)).one()
     except NoResultFound:
-        return err(404, 'No event found with public_id {}'.
-                   format(public_id))
-    if event.namespace != g.namespace:
-        return err(404, 'No event found with public_id {}'.
-                   format(public_id))
+        raise NotFound('No event found with public_id {}'.format(public_id))
+
     if event.calendar.read_only:
-        return err(404, 'Cannot delete event with public_id {} from '
-                   ' read_only calendar.'.format(public_id))
+        raise BadRequest('Cannot delete event with public_id {} from '
+                         'read_only calendar.'.format(public_id))
 
     schedule_action('delete_event', event, g.namespace.id, g.db_session,
                     event_uid=event.uid,
@@ -836,42 +770,24 @@ def files_api():
 
 @app.route('/files/<public_id>', methods=['GET'])
 def file_read_api(public_id):
-    try:
-        valid_public_id(public_id)
-        f = g.db_session.query(Block).filter(
-            Block.public_id == public_id,
-            Block.namespace_id == g.namespace.id).one()
-        return g.encoder.jsonify(f)
-    except InputError:
-        return err(400, 'Invalid file id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find file with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
-
+    valid_public_id(public_id)
+    f = get_object_or_404(g.db_session, Block, public_id=public_id,
+                          namespace_id = g.namespace.id)
+    return g.encoder.jsonify(f)
 
 @app.route('/files/<public_id>', methods=['DELETE'])
 def file_delete_api(public_id):
-    try:
-        valid_public_id(public_id)
-        f = g.db_session.query(Block).filter(
-            Block.public_id == public_id,
-            Block.namespace_id == g.namespace.id).one()
+    valid_public_id(public_id)
+    f = get_object_or_404(g.db_session, Block, public_id=public_id,
+                          namespace_id = g.namespace.id)
 
-        if g.db_session.query(Block).join(Part) \
-                .filter(Block.public_id == public_id).first() is not None:
-            return err(400, "Can't delete file that is attachment.")
+    if g.db_session.query(Block).join(Part) \
+        .filter(Block.public_id == public_id).first() is not None:
+        raise BadRequest("Can't delete file that is attachement.")
 
-        g.db_session.delete(f)
-        g.db_session.commit()
-
-        # This is essentially what our other API endpoints do after deleting.
-        # Effectively no error == success
-        return g.encoder.jsonify(None)
-    except InputError:
-        return err(400, 'Invalid file id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find file with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+    g.db_session.delete(f)
+    g.db_session.commit()
+    return g.encoder.jsonify(None)
 
 
 #
@@ -902,16 +818,9 @@ def file_upload_api():
 #
 @app.route('/files/<public_id>/download')
 def file_download_api(public_id):
-    try:
-        valid_public_id(public_id)
-        f = g.db_session.query(Block).filter(
-            Block.public_id == public_id,
-            Block.namespace_id == g.namespace.id).one()
-    except InputError:
-        return err(400, 'Invalid file id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, "Couldn't find file with id {0} "
-                   "on namespace {1}".format(public_id, g.namespace_public_id))
+    valid_public_id(public_id)
+    f = get_object_or_404(g.db_session, Block, public_id = public_id,
+                          namespace_id = g.namespace.id)
 
     # Here we figure out the filename.extension given the
     # properties which were set on the original attachment
@@ -994,7 +903,7 @@ def calendar_create_api():
     data = request.get_json(force=True)
 
     if 'name' not in data:
-        return err(404, "Calendar must have a name.")
+        raise BadRequest("Calendar must have a name.")
 
     name = data['name']
 
@@ -1003,7 +912,7 @@ def calendar_create_api():
         Calendar.namespace_id == g.namespace.id).first()
 
     if existing:
-        return err(404, "Calendar already exists with name '{}'.".format(name))
+        raise BadRequest("Calendar already exists with name '{}'.".format(name))
 
     description = data.get('description', None)
 
@@ -1015,47 +924,41 @@ def calendar_create_api():
 @app.route('/calendars/<public_id>', methods=['GET'])
 def calendar_read_api(public_id):
     """Get all data for an existing calendar."""
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid calendar id {}'.format(public_id))
+    valid_public_id(public_id)
 
     result = events.crud.read_calendar(g.namespace, g.db_session, public_id)
     if result is None:
-        return err(404, "Couldn't find calendar with id {0}".
-                   format(public_id))
+        raise NotFound("Couldn't find calendar with id {0}".format(public_id))
     return g.encoder.jsonify(result)
 
 
 @app.route('/calendars/<public_id>', methods=['PUT'])
 def calendar_update_api(public_id):
-    try:
-        calendar = get_calendar(public_id, g.namespace, g.db_session)
-    except InputError as e:
-        return err(404, str(e))
+    valid_public_id(public_id)
+    calendar = get_object_or_404(g.db_session, Calendar, public_id = public_id,
+                                 namespace_id = g.namespace.id)
 
     if calendar.read_only:
-        return err(400, "Cannot update a read_only calendar.")
+        raise BadRequest("Cannot update a read_only calendar.")
 
     data = request.get_json(force=True)
     result = events.crud.update_calendar(g.namespace, g.db_session,
                                          public_id, data)
 
     if result is None:
-        return err(404, "Couldn't find calendar with id {0}".
-                   format(public_id))
+        raise NotFound("Couldn't find calendar with id {0}".format(public_id))
+
     return g.encoder.jsonify(result)
 
 
 @app.route('/calendars/<public_id>', methods=['DELETE'])
 def calendar_delete_api(public_id):
-    try:
-        calendar = get_calendar(public_id, g.namespace, g.db_session)
-    except InputError as e:
-        return err(404, str(e))
+    valid_public_id(public_id)
+    calendar = get_object_or_404(g.db_session, Calendar, public_id = public_id,
+                                 namespace_id = g.namespace.id)
 
     if calendar.read_only:
-        return err(400, "Cannot delete a read_only calendar.")
+        raise BadRequest("Cannot delete a read_only calendar.")
 
     result = events.crud.delete_calendar(g.namespace, g.db_session,
                                          public_id)
@@ -1113,13 +1016,11 @@ def draft_query_api():
 
 @app.route('/drafts/<public_id>', methods=['GET'])
 def draft_get_api(public_id):
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid draft id {}'.format(public_id))
+    valid_public_id(public_id)
+
     draft = sendmail.get_draft(g.db_session, g.namespace.account, public_id)
     if draft is None:
-        return err(404, 'No draft found with id {}'.format(public_id))
+        raise NotFound('No draft found with id {}'.format(public_id))
     return g.encoder.jsonify(draft)
 
 
@@ -1139,38 +1040,32 @@ def draft_create_api():
         replyto_thread = get_thread(data.get('thread_id'),
                                     g.namespace.id, g.db_session)
     except InputError as e:
-        return err(404, str(e))
+        raise NotFound(str(e))
 
-    try:
-        draft = sendmail.create_draft(g.db_session, g.namespace.account, to,
-                                      subject, body, files, cc, bcc,
-                                      tags, replyto_thread)
-    except ActionError as e:
-        return err(e.error, str(e))
+    draft = sendmail.create_draft(g.db_session, g.namespace.account, to,
+                                  subject, body, files, cc, bcc,
+                                  tags, replyto_thread)
 
     return g.encoder.jsonify(draft)
 
 
 @app.route('/drafts/<public_id>', methods=['PUT'])
 def draft_update_api(public_id):
-    try:
-        valid_public_id(public_id)
-    except InputError:
-        return err(400, 'Invalid draft id {}'.format(public_id))
+    valid_public_id(public_id)
 
     data = request.get_json(force=True)
     if data.get('version') is None:
-        return err(400, 'Must specify version to update')
+        raise BadRequest('Must specify version to update')
 
     version = data.get('version')
-    original_draft = g.db_session.query(Message).filter(
-        Message.public_id == public_id).first()
-    if original_draft is None or not original_draft.is_draft or \
-            original_draft.namespace.id != g.namespace.id:
-        return err(404, 'No draft with public id {}'.format(public_id))
+    original_draft = get_object_or_404(g.db_session, Message,
+                                       public_id = public_id,
+                                       is_draft = True,
+                                       namespace_id = g.namespace.id)
+
     if original_draft.version != version:
-        return err(409, 'Draft {0}.{1} has already been updated to version '
-                   '{2}'.format(public_id, version, original_draft.version))
+        raise Conflict('Draft {0}.{1} has already been updated to version {2}' \
+                       .format(public_id, version, original_draft.version))
 
     # TODO(emfree): what if you try to update a draft on a *thread* that's been
     # deleted?
@@ -1187,14 +1082,11 @@ def draft_update_api(public_id):
         files = get_attachments(data.get('file_ids'), g.namespace.id,
                                 g.db_session)
     except InputError as e:
-        return err(404, str(e))
+        raise NotFound(str(e))
 
-    try:
-        draft = sendmail.update_draft(g.db_session, g.namespace.account,
-                                      original_draft, to, subject, body,
-                                      files, cc, bcc, tags)
-    except ActionError as e:
-        return err(e.error, str(e))
+    draft = sendmail.update_draft(g.db_session, g.namespace.account,
+                                  original_draft, to, subject, body,
+                                  files, cc, bcc, tags)
 
     return g.encoder.jsonify(draft)
 
@@ -1203,36 +1095,18 @@ def draft_update_api(public_id):
 def draft_delete_api(public_id):
     data = request.get_json(force=True)
     if data.get('version') is None:
-        return err(400, 'Must specify version to delete')
+        return BadRequest('Must specify version to delete')
+
     version = data.get('version')
-
-    try:
-        valid_public_id(public_id)
-        draft = g.db_session.query(Message).filter(
-            Message.public_id == public_id).one()
-    except InputError:
-        return err(400, 'Invalid public id {}'.format(public_id))
-    except NoResultFound:
-        return err(404, 'No draft found with public_id {}'.
-                   format(public_id))
-
-    if draft.namespace != g.namespace:
-        return err(404, 'No draft found with public_id {}'.
-                   format(public_id))
-
-    if not draft.is_draft:
-        return err(400, 'Message with public id {} is not a draft'.
-                   format(public_id))
+    draft = get_object_or_404(g.db_session, Message, public_id = public_id,
+                              is_draft = True, namespace_id = g.namespace.id)
 
     if draft.version != version:
-        return err(409, 'Draft {0}.{1} has already been updated to version '
-                   '{2}'.format(public_id, version, draft.version))
+        raise Conflict('Draft {0}.{1} has already been updated to version {2}' \
+                       .format(public_id, version, draft.version))
 
-    try:
-        result = sendmail.delete_draft(g.db_session, g.namespace.account,
-                                       public_id)
-    except ActionError as e:
-        return err(e.error, str(e))
+    result = sendmail.delete_draft(g.db_session, g.namespace.account,
+                                   public_id)
 
     return g.encoder.jsonify(result)
 
@@ -1240,51 +1114,42 @@ def draft_delete_api(public_id):
 @app.route('/send', methods=['POST'])
 def draft_send_api():
     if rate_limited(g.namespace.id, g.db_session):
-        return err(429, 'Daily sending quota exceeded.')
+        raise TooManyRequests('Daily sending quota exceeded.')
+
     data = request.get_json(force=True)
     if data.get('draft_id') is None:
         if not data.get('to'):
-            return err(400, 'Must specify either draft id + version or '
-                       'message recipients.')
-    else:
-        if data.get('version') is None:
-            return err(400, 'Must specify version to send')
+            raise BadRequest('Must specify either draft id + version or '
+                             'message recipients.')
+    elif data.get('version') is None:
+        raise BadRequest('Must specify version to send')
 
     draft_public_id = data.get('draft_id')
     version = data.get('version')
+
     if draft_public_id is not None:
-        try:
-            valid_public_id(draft_public_id)
-            draft = g.db_session.query(Message).filter(
-                Message.public_id == draft_public_id).one()
-        except InputError:
-            return err(400, 'Invalid public id {}'.format(draft_public_id))
-        except NoResultFound:
-            return err(404, 'No draft found with id {}'.
-                       format(draft_public_id))
+        valid_public_id(draft_public_id)
+        draft = get_object_or_404(g.db_session, Message,
+                                  public_id = draft_public_id,
+                                  is_draft = True,
+                                  namespace_id = g.namespace.id)
 
-        if draft.namespace != g.namespace:
-            return err(404, 'No draft found with id {}'.
-                       format(draft_public_id))
-
-        if draft.is_sent or not draft.is_draft:
-            return err(400, 'Message with id {} is not a draft'.
-                       format(draft_public_id))
+        if draft.is_sent:
+            raise BadRequest('Message with id {} has already been sent' \
+                             .format(draft_public_id))
 
         if not draft.to_addr:
-            return err(400, "No 'to:' recipients specified")
+            raise BadRequest("No 'to:' recipients specified")
 
         if draft.version != version:
-            return err(
-                409, 'Draft {0}.{1} has already been updated to version {2}'.
-                format(draft_public_id, version, draft.version))
+            raise Conflict('Draft {0}.{1} has already been updated to version '
+                           '{2}'.format(draft_public_id, version, draft.version)
+                       )
 
         validate_draft_recipients(draft)
 
-        try:
-            schedule_action('send_draft', draft, g.namespace.id, g.db_session)
-        except ActionError as e:
-            return err(e.error, str(e))
+        schedule_action('send_draft', draft, g.namespace.id, g.db_session)
+
     else:
         to = get_recipients(data.get('to'), 'to', validate_emails=True)
         cc = get_recipients(data.get('cc'), 'cc', validate_emails=True)
@@ -1298,16 +1163,13 @@ def draft_send_api():
             replyto_thread = get_thread(data.get('thread_id'),
                                         g.namespace.id, g.db_session)
         except InputError as e:
-            return err(404, str(e))
+            raise NotFound(str(e))
 
-        try:
-            draft = sendmail.create_draft(g.db_session, g.namespace.account,
-                                          to, subject, body, files, cc, bcc,
-                                          tags, replyto_thread, syncback=False)
-            schedule_action('send_directly', draft, g.namespace.id,
-                            g.db_session)
-        except ActionError as e:
-            return err(e.error, str(e))
+        draft = sendmail.create_draft(g.db_session, g.namespace.account,
+                                      to, subject, body, files, cc, bcc,
+                                      tags, replyto_thread, syncback=False)
+        schedule_action('send_directly', draft, g.namespace.id,
+                        g.db_session)
 
     draft.state = 'sending'
     return g.encoder.jsonify(draft)
@@ -1333,7 +1195,7 @@ def sync_deltas():
                 filter(Transaction.public_id == cursor,
                        Transaction.namespace_id == g.namespace.id).one()
         except NoResultFound:
-            return err(404, 'Invalid cursor parameter')
+            raise NotFound('Invalid cursor parameter')
     exclude_types = args.get('exclude_types')
     deltas, _ = delta_sync.format_transactions_after_pointer(
         g.namespace.id, start_pointer, g.db_session, args['limit'],
@@ -1354,8 +1216,8 @@ def sync_deltas():
 def generate_cursor():
     data = request.get_json(force=True)
     if data.keys() != ['start'] or not isinstance(data['start'], int):
-        return err(400, 'generate_cursor request body must have the format '
-                        '{"start": <Unix timestamp>}')
+        raise BadRequest('generate_cursor request body must have the format '
+                         '{"start": <Unix timestamp>}')
 
     timestamp = int(data['start'])
     cursor = delta_sync.get_transaction_cursor_near_timestamp(
@@ -1385,7 +1247,7 @@ def stream_changes():
             Transaction.namespace_id == g.namespace.id,
             Transaction.public_id == cursor).first()
         if query_result is None:
-            return err(400, 'Invalid cursor {}'.format(args['cursor']))
+            raise BadRequest('Invalid cursor {}'.format(args['cursor']))
         transaction_pointer = query_result[0]
     exclude_types = args.get('exclude_types')
 

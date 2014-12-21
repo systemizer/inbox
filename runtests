@@ -11,6 +11,7 @@ def main():
     parser.add_argument('-a', '--all', dest='all', action='store_true')
     parser.add_argument('-i', '--imap', dest='imap', action='store_true')
     parser.add_argument('-e', '--eas', dest='eas', action='store_true')
+    parser.add_argument('-o', '--only', dest='only', action='store')
     parser.add_argument('extra', nargs='?')
 
     args, extra_args = parser.parse_known_args()
@@ -31,6 +32,9 @@ def main():
     # All tests
     elif args.all:
         testrunner.append('tests/')
+
+    elif args.only:
+        testrunner.append(args.only)
 
      # Only general i.e. provider agnostic tests (Default)
     else:

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from flask import Flask, request, jsonify
 from flask.ext.restful import reqparse
 from werkzeug.exceptions import default_exceptions, HTTPException
@@ -17,15 +18,25 @@ app = Flask(__name__)
 # Note that we need to set this *before* registering the blueprint.
 app.url_map.strict_slashes = False
 
+ERROR_TYPE_MAP = defaultdict(
+    lambda: 'api_error', {
+        404: 'invalid_request_error'
+    })
 
 def default_json_error(ex):
     """ Exception -> flask JSON responder """
-    logger = get_logger()
-    logger.error('Uncaught error thrown by Flask/Werkzeug', exc_info=ex)
-    response = jsonify(message=str(ex), type='api_error')
-    response.status_code = (ex.code
-                            if isinstance(ex, HTTPException)
-                            else 500)
+
+    # If not in default_exceptions, it probably is a new error we need to handle
+    if ex not in default_exceptions.values():
+        logger = get_logger()
+        logger.error('Uncaught error thrown by Flask/Werkzeug', exc_info=ex)
+
+    code = ex.code if isinstance(ex, HTTPException) else 500
+    message = ex.description if isinstance(ex, HTTPException) else str(ex)
+
+    response = jsonify(message=message, type=ERROR_TYPE_MAP[code])
+    response.status_code = code
+
     return response
 
 # Patch all error handlers in werkzeug

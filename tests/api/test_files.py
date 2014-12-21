@@ -133,12 +133,12 @@ def test_get_invalid(api_client, uploaded_file_ids):
     data = api_client.get_data('/files/0000000000000000000000000')
     assert data['message'].startswith("Couldn't find file")
     data = api_client.get_data('/files/!')
-    assert data['message'].startswith("Invalid file id")
+    assert data['message'].startswith("Invalid id")
 
     data = api_client.get_data('/files/0000000000000000000000000/download')
     assert data['message'].startswith("Couldn't find file")
     data = api_client.get_data('/files/!/download')
-    assert data['message'].startswith("Invalid file id")
+    assert data['message'].startswith("Invalid id")
 
     r = api_client.delete('/files/0000000000000000000000000')
     assert r.status_code == 404
