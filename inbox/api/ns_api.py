@@ -1,3 +1,4 @@
+import mimetypes
 import os
 import base64
 
@@ -37,32 +38,13 @@ from err import err
 from inbox.ignition import main_engine
 engine = main_engine()
 
-
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
-
 
 app = Blueprint(
     'namespace_api',
     __name__,
     url_prefix='/n/<namespace_public_id>')
-
-# Configure mimetype -> extension map
-# TODO perhaps expand to encompass non-standard mimetypes too
-# see python mimetypes library
-common_extensions = {}
-mt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'mime_types.txt')
-with open(mt_path, 'r') as f:
-    for x in f:
-        x = x.strip()
-        if not x or x.startswith('#'):
-            continue
-        m = x.split()
-        mime_type, extensions = m[0], m[1:]
-        assert extensions, 'Must have at least one extension per mimetype'
-        common_extensions[mime_type.lower()] = extensions[0]
-
 
 @app.url_value_preprocessor
 def pull_lang_code(endpoint, values):
@@ -913,29 +895,12 @@ def file_download_api(public_id):
         return err(404, "Couldn't find file with id {0} "
                    "on namespace {1}".format(public_id, g.namespace_public_id))
 
-    # Here we figure out the filename.extension given the
-    # properties which were set on the original attachment
-    # TODO consider using werkzeug.secure_filename to sanitize?
-
-    if f.content_type:
-        ct = f.content_type.lower()
-    else:
-        # TODO Detect the content-type using the magic library
-        # and set ct = the content type, which is used below
-        g.log.error("Content type not set! Defaulting to text/plain")
-        ct = 'text/plain'
-
-    if f.filename:
-        name = f.filename
-    else:
+    name = f.filename
+    if not name:
         g.log.debug("No filename. Generating...")
-        if ct in common_extensions:
-            name = 'attachment.{0}'.format(common_extensions[ct])
-        else:
-            g.log.error("Unknown extension for content-type: {0}"
-                        .format(ct))
-            # HACK just append the major part of the content type
-            name = 'attachment.{0}'.format(ct.split('/')[0])
+        name = 'attachment.{}'.format(
+            mimetypes.guess_extension(f.content_type) or '.txt'
+        )
 
     # TODO the part.data object should really behave like a stream we can read
     # & write to
