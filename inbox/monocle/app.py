@@ -73,68 +73,68 @@ def accounts():
 
 
 def calculate_imap_status(db_session, accts):
-        from inbox.models.backends.imap import ImapFolderSyncStatus, ImapUid
+    from inbox.models.backends.imap import ImapFolderSyncStatus, ImapUid
 
-        ids = [a.id for a in accts]
+    ids = [a.id for a in accts]
 
-        metrics = db_session.query(
-            ImapFolderSyncStatus.account_id,
-            ImapFolderSyncStatus._metrics).filter(
-            ImapFolderSyncStatus.account_id.in_(ids)).all()
+    metrics = db_session.query(
+        ImapFolderSyncStatus.account_id,
+        ImapFolderSyncStatus._metrics).filter(
+        ImapFolderSyncStatus.account_id.in_(ids)).all()
 
-        numuids = db_session.query(
-            ImapUid.account_id, func.count(ImapUid.id)).group_by(
-            ImapUid.account_id).all()
+    numuids = db_session.query(
+        ImapUid.account_id, func.count(ImapUid.id)).group_by(
+        ImapUid.account_id).all()
 
-        remote = defaultdict(int)
-        for m in metrics:
-            if m[1] is not None:
-                remote[m[0]] += m[1].get('remote_uid_count', 0)
+    remote = defaultdict(int)
+    for m in metrics:
+        if m[1] is not None:
+            remote[m[0]] += m[1].get('remote_uid_count', 0)
 
-        local = defaultdict(int)
-        for m in numuids:
-            local[m[0]] = m[1]
+    local = defaultdict(int)
+    for m in numuids:
+        local[m[0]] = m[1]
 
-        accounts_info = []
-        for a in accts:
-            status = a.sync_status
-            status.update(remote_count=remote[a.id], local_count=local[a.id])
+    accounts_info = []
+    for a in accts:
+        status = a.sync_status
+        status.update(remote_count=remote[a.id], local_count=local[a.id])
 
-            accounts_info.append(status)
+        accounts_info.append(status)
 
-        return accounts_info
+    return accounts_info
 
 
 def calculate_eas_status(db_session, accts):
-        from inbox.models.backends.eas import EASFolderSyncStatus, EASUid
+    from inbox.models.backends.eas import EASFolderSyncStatus, EASUid
 
-        ids = [a.id for a in accts]
+    ids = [a.id for a in accts]
 
-        metrics = db_session.query(
-            EASFolderSyncStatus.account_id,
-            EASFolderSyncStatus._metrics).filter(
-            EASFolderSyncStatus.account_id.in_(ids)).all()
+    metrics = db_session.query(
+        EASFolderSyncStatus.account_id,
+        EASFolderSyncStatus._metrics).filter(
+        EASFolderSyncStatus.account_id.in_(ids)).all()
 
-        numuids = db_session.query(
-            EASUid.easaccount_id, func.count(EASUid.id)).group_by(
-            EASUid.easaccount_id).all()
+    numuids = db_session.query(
+        EASUid.easaccount_id, func.count(EASUid.id)).group_by(
+        EASUid.easaccount_id).all()
 
-        remote = defaultdict(int)
-        for m in metrics:
-            remote[m[0]] += m[1].get('total_remote_count', 0)
+    remote = defaultdict(int)
+    for m in metrics:
+        remote[m[0]] += m[1].get('total_remote_count', 0)
 
-        local = defaultdict(int)
-        for m in numuids:
-            local[m[0]] = m[1]
+    local = defaultdict(int)
+    for m in numuids:
+        local[m[0]] = m[1]
 
-        accounts_info = []
-        for a in accts:
-            status = a.sync_status
-            status.update(remote_count=remote[a.id], local_count=local[a.id])
+    accounts_info = []
+    for a in accts:
+        status = a.sync_status
+        status.update(remote_count=remote[a.id], local_count=local[a.id])
 
-            accounts_info.append(status)
+        accounts_info.append(status)
 
-        return accounts_info
+    return accounts_info
 
 
 @app.route('/account/<account_id>', methods=['GET'])
