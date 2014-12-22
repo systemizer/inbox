@@ -1,13 +1,10 @@
 #!/usr/bin/python
-import platform
-from subprocess import call
-import json
 import datetime
 from collections import defaultdict
 import logging
 from logging import FileHandler
 
-from flask import Flask, g, request
+from flask import Flask, g, request, jsonify
 
 from sqlalchemy import func
 from sqlalchemy.orm.exc import NoResultFound
@@ -69,7 +66,7 @@ def accounts():
 
         last_calc_at = datetime.datetime.utcnow()
 
-    return json.dumps(ACCOUNTS_INFO, cls=DateTimeJSONEncoder)
+    return jsonify(account_info = ACCOUNTS_INFO)
 
 
 def calculate_imap_status(db_session, accts):
@@ -164,17 +161,7 @@ def account(account_id):
         folders_info = []
         sync_status = {}
 
-    return json.dumps({"account": sync_status,
-                       "folders": folders_info}, cls=DateTimeJSONEncoder)
-
-
-class DateTimeJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime.datetime):
-            return str(obj)
-        else:
-            return super(DateTimeJSONEncoder, self).default(obj)
-
+    return jsonify(account = sync_status, folders = folders_info)
 
 if __name__ == '__main__':
     from setproctitle import setproctitle
@@ -187,4 +174,4 @@ if __name__ == '__main__':
         handler.setLevel(logging.INFO)
         app.logger.addHandler(handler)
 
-    app.run(host='127.0.0.1')
+    app.run(host='0.0.0.0')

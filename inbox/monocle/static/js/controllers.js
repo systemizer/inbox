@@ -28,7 +28,8 @@ angular.module('monocleApp.controllers', [])
       };
 
       $scope.parseAccountResponse = function(response) {
-          $scope.accountsList = response;
+          $scope.accountsList = response['account_info'];
+	  response = response['account_info'];
           var i = 0;
           var state_count = {}
           var provider_count = {}
