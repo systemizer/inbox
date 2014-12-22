@@ -21,7 +21,7 @@ from inbox.util.itert import partition
 engine = main_engine(pool_size=5)
 
 app = Flask(__name__, static_url_path='')
-app.debug = False
+app.debug = True
 
 ACCOUNTS_INFO = []
 last_calc_at = None
@@ -88,7 +88,8 @@ def calculate_imap_status(db_session, accts):
 
         remote = defaultdict(int)
         for m in metrics:
-            remote[m[0]] += m[1].get('remote_uid_count', 0)
+            if m[1] is not None:
+                remote[m[0]] += m[1].get('remote_uid_count', 0)
 
         local = defaultdict(int)
         for m in numuids:
