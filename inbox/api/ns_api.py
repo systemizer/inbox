@@ -535,9 +535,8 @@ def contact_read_api(public_id):
 
     # TODO auth with account object
     # Get all data for an existing contact.
-    result = contacts.crud.read(g.namespace, g.db_session, public_id)
-    if result is None:
-        raise NotFound("Couldn't find contact with id {0}".format(public_id))
+    result = get_object_or_404(g.db_session, Contact, public_id = public_id,
+                               namespace_id = g.namespace.id)
     return g.encoder.jsonify(result)
 
 
@@ -681,9 +680,8 @@ def event_read_api(public_id):
     #            return err(404, "Couldn't find participant with id `{0}` "
     #                       .format(participant_id))
 
-    result = events.crud.read(g.namespace, g.db_session, public_id)
-    if result is None:
-        raise NotFound("Couldn't find event with id {0}".format(public_id))
+    result = get_object_or_404(g.db_session, Event, public_id = public_id,
+                               namespace_id = g.namespace.id)
     return g.encoder.jsonify(result)
 
 
@@ -926,9 +924,8 @@ def calendar_read_api(public_id):
     """Get all data for an existing calendar."""
     valid_public_id(public_id)
 
-    result = events.crud.read_calendar(g.namespace, g.db_session, public_id)
-    if result is None:
-        raise NotFound("Couldn't find calendar with id {0}".format(public_id))
+    result = get_object_or_404(g.db_session, Calendar, public_id = public_id,
+                               namespace_id = g.namespace.id)
     return g.encoder.jsonify(result)
 
 
