@@ -43,7 +43,6 @@ bin/epylint
 *.egg
 *.egg-info
 dist
-build
 eggs
 parts
 var
@@ -73,6 +72,7 @@ nosetests.xml
 # Editor temporary files
 *.swp
 *.swo
+*~
 
 # ctags
 tags
@@ -80,3 +80,7 @@ TAGS
 
 # directory used to store build files
 setup/
+
+
+#Pants specific
+.pants.d

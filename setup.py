@@ -1,11 +1,15 @@
 from setuptools import setup, find_packages
+import inbox
 
 setup(
     name="inbox-sync",
-    version="0.4",
+    version=inbox.__version__,
     packages=find_packages(),
 
-    install_requires=[],
+    install_requires=[
+        "gevent",
+        "setproctitle"
+    ],
     dependency_links=[],
 
     package_data={

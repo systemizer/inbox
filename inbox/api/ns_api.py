@@ -1,5 +1,6 @@
 import os
 import base64
+from pkg_resources import resource_stream
 
 from datetime import datetime
 from flask import request, g, Blueprint, make_response, Response
@@ -51,17 +52,15 @@ app = Blueprint(
 # TODO perhaps expand to encompass non-standard mimetypes too
 # see python mimetypes library
 common_extensions = {}
-mt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'mime_types.txt')
-with open(mt_path, 'r') as f:
-    for x in f:
-        x = x.strip()
-        if not x or x.startswith('#'):
-            continue
-        m = x.split()
-        mime_type, extensions = m[0], m[1:]
-        assert extensions, 'Must have at least one extension per mimetype'
-        common_extensions[mime_type.lower()] = extensions[0]
+
+for x in resource_stream("inbox.api", "mime_types.txt"):
+    x = x.strip()
+    if not x or x.startswith('#'):
+        continue
+    m = x.split()
+    mime_type, extensions = m[0], m[1:]
+    assert extensions, 'Must have at least one extension per mimetype'
+    common_extensions[mime_type.lower()] = extensions[0]
 
 
 @app.url_value_preprocessor

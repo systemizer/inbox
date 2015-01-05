@@ -21,9 +21,9 @@ chardet==2.1.1
 setproctitle==1.1.8
 gdata==2.0.18
 python-dateutil==2.3
-git+https://github.com/inboxapp/flanker.git@9ed2a184e1e422ba8936af24b5d1a7d8b877a2ba#egg=flanker
+#git+https://github.com/inboxapp/flanker.git@9ed2a184e1e422ba8936af24b5d1a7d8b877a2ba#egg=flanker
 # imapclient==0.11
-git+https://github.com/inboxapp/imapclient.git@inbox-modseq-hotfix#egg=imapclient
+#git+https://github.com/inboxapp/imapclient.git@inbox-modseq-hotfix#egg=imapclient
 alembic==0.6.4
 iconv==1.0
 pep8==1.4.6
@@ -40,7 +40,7 @@ pyinstrument==0.12
 structlog==0.4.1
 lxml==3.3.5  # For talon
 cssselect==0.9.1  # For talon
-git+https://github.com/inboxapp/talon.git@master#egg=talon
+#git+https://github.com/inboxapp/talon.git@master#egg=talon
 raven==5.0.0
 simplejson==3.6.0
 Flask-RESTful==0.2.12
@@ -48,10 +48,10 @@ google-api-python-client==1.2
 oauth2client==1.2
 icalendar==3.8.2
 #pynacl==0.2.3
-git+https://github.com/kav-ya/pynacl.git@libsodium_fix#egg=pynacl
+#git+https://github.com/kav-ya/pynacl.git@libsodium_fix#egg=pynacl
 pyaml==14.05.7
 enum==0.4.4
-git+https://github.com/inboxapp/inbox-python.git@master#egg=inbox
+#git+https://github.com/inboxapp/inbox-python.git@master#egg=inbox
 msgpack-python==0.4.2
 guppy==0.1.10
 elasticsearch==1.2.0

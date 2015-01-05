@@ -14,15 +14,15 @@ http://www.w3.org/Protocols/rfc1341/5_Content-Transfer-Encoding.html
 
 """
 from collections import namedtuple
-import pkg_resources
 
 from flanker import mime
 from flanker.addresslib import address
 from html2text import html2text
 
 from inbox.sqlalchemy_ext.util import generate_public_id
+import inbox
 
-VERSION = pkg_resources.get_distribution('inbox').version
+VERSION = inbox.__version__
 
 REPLYSTR = 'Re: '
 
