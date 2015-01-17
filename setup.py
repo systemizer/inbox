@@ -41,6 +41,7 @@ setup(
     ],
     dependency_links=[],
 
+    include_package_data = True,
     package_data={
         # If any package contains *.txt or *.rst files, include them:
         # '': ['*.txt', '*.rst'],
