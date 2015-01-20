@@ -1,1 +1,1 @@
-include inbox/docs/api/*.mdown inbox/docs/gettingstarted/*.mdown
+include inbox/docs/api/*.mdown inbox/docs/gettingstarted/*.mdown inbox/api/mime_types.txt etc/*
