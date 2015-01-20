@@ -1,2 +1,2 @@
 include inbox/docs/api/*.mdown inbox/docs/gettingstarted/*.mdown inbox/api/mime_types.txt etc/*
-recursive-include *.html
+recursive-include inbox *.html
