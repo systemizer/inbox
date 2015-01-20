@@ -43,6 +43,7 @@ setup(
 
     include_package_data = True,
     package_data={
+        "": ["*.html",]
         # If any package contains *.txt or *.rst files, include them:
         # '': ['*.txt', '*.rst'],
         # And include any *.msg files found in the 'hello' package, too:
