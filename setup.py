@@ -42,16 +42,16 @@ setup(
     ],
     dependency_links=[],
 
-    include_package_data = True,
+    include_package_data=True,
     package_data={
-        "": ["*.html",]
+        #"inbox-sync": ["alembic.ini"],
         # If any package contains *.txt or *.rst files, include them:
         # '': ['*.txt', '*.rst'],
         # And include any *.msg files found in the 'hello' package, too:
         # 'hello': ['*.msg'],
     },
+    data_files=[(".", ["alembic.ini"])],
     scripts=['bin/inbox-start', 'bin/search-index-service', 'bin/syncback-service'],
-    data_files=["alembic.ini"],
 
     # See:
     # https://pythonhosted.org/setuptools/setuptools.html#dynamic-discovery-of-services-and-plugins
