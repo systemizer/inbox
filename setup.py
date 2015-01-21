@@ -51,6 +51,7 @@ setup(
         # 'hello': ['*.msg'],
     },
     scripts=['bin/inbox-start', 'bin/search-index-service', 'bin/syncback-service'],
+    data_files=["alembic.ini"],
 
     # See:
     # https://pythonhosted.org/setuptools/setuptools.html#dynamic-discovery-of-services-and-plugins
