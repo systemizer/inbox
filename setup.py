@@ -49,6 +49,7 @@ setup(
         # And include any *.msg files found in the 'hello' package, too:
         # 'hello': ['*.msg'],
     },
+    scripts=['bin/inbox-start', 'bin/search-index-service', 'bin/syncback-service'],
 
     # See:
     # https://pythonhosted.org/setuptools/setuptools.html#dynamic-discovery-of-services-and-plugins
