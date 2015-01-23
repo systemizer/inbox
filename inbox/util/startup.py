@@ -27,8 +27,8 @@ def check_db():
     inbox_db_engine = main_engine(pool_size=1, max_overflow=0)
 
     # top-level, with setup.sh
-    alembic_ini_filename = _os.environ.get("ALEMBIC_INI_PATH",
-                                           absolute_path('../../alembic.ini'))
+    alembic_ini_filename = os.environ.get("ALEMBIC_INI_PATH",
+                                          _absolute_path('../../alembic.ini'))
     assert os.path.isfile(alembic_ini_filename), \
         'Must have alembic.ini file at {}'.format(alembic_ini_filename)
     alembic_cfg = alembic_config(alembic_ini_filename)

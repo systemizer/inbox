@@ -1,4 +1,7 @@
+import glob
+import os
 from setuptools import setup, find_packages
+
 
 setup(
     name="inbox-sync",
@@ -50,7 +53,13 @@ setup(
         # And include any *.msg files found in the 'hello' package, too:
         # 'hello': ['*.msg'],
     },
-    data_files=[(".", ["alembic.ini"])],
+    data_files=[(".", ["alembic.ini"]),
+                ("migrations", filter(os.path.isfile,
+                                      glob.glob("migrations/*"))),
+                ("migrations/versions",
+                 filter(os.path.isfile, glob.glob("migrations/versions/*")))
+                ],
+
     scripts=['bin/inbox-start', 'bin/search-index-service', 'bin/syncback-service'],
 
     # See:
